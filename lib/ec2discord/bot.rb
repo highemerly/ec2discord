@@ -2,6 +2,8 @@ require 'dotenv'
 require 'discordrb'
 require 'net/http'
 require 'open3'
+require 'logger'
+require 'sqlite3'
 
 module Ec2discord
   class Bot
@@ -12,6 +14,8 @@ module Ec2discord
         token:     ENV["DC_BOT_TOKEN"],
         prefix:    @prefix,
       )
+      @db = Ec2discordDB.new(@settings["sqlite_filepath"])
+      @msg_help = Hash.new
     end
 
     def set_env
@@ -20,9 +24,10 @@ module Ec2discord
 
       @settings = Hash.new
 
-      @settings["start_uri"]      = URI.parse(ENV["AWS_EC2START_URI"])
-      @settings["start_interval"] = ENV["SV_START_MIN_INTERVAL"].to_i > 0 ? ENV["SV_START_MIN_INTERVAL"].to_i : 0
-      @settings["stop_interval"]  = ENV["SV_STOP_MIN_INTERVAL"].to_i > 0 ? ENV["SV_STOP_MIN_INTERVAL"].to_i : 0
+      @settings["start_uri"]       = URI.parse(ENV["AWS_EC2START_URI"])
+      @settings["start_interval"]  = ENV["SV_START_MIN_INTERVAL"].to_i > 0 ? ENV["SV_START_MIN_INTERVAL"].to_i : 0
+      @settings["stop_interval"]   = ENV["SV_STOP_MIN_INTERVAL"].to_i > 0 ? ENV["SV_STOP_MIN_INTERVAL"].to_i : 0
+      @settings["sqlite_filepath"] = ENV["SQLITE_PATH"].nil? ? "ec2discord.db" : ENV["SQLITE_PATH"]
 
       @sh = Hash.new
 
@@ -39,10 +44,12 @@ module Ec2discord
 
     def run
       setup
+      puts "Info: Botが起動します。"
       @bot.run
     end
 
     def setup
+      @msg_help["server"] = "サーバの制御要求，または状態確認を行います。"
       @bot.command :server do |event, cmd|
         case cmd
         when "start" then
@@ -93,21 +100,130 @@ module Ec2discord
           msg  = "1分平均,5分平均,15分平均＝"
           msg += `#{@sh["cpu"]}`
         else
-          msg  = "不正なコマンドです。"
+          msg  = ""
+          unless cmd == "help" || cmd == nil then
+	        	msg += "存在しないコマンドです。"
+	        end
           msg += "```\n"
-          msg += @prefix + "server start: サーバを起動します\n"
-          msg += @prefix + "server stop: サーバを停止します\n"
-          msg += @prefix + "server status: サービスの状態を表示します\n"
-          msg += @prefix + "server df: サーバのディスク状態を表示します\n"
-          msg += @prefix + "server cpu: CPUロードアベレージを表示します\n"
+          msg += @prefix + "server [command]\n"
+          msg += "       " + @msg_help["server"] + "\n"
+          msg += "\n"
+          msg += " [command]\n"
+          msg += "   start...サーバを起動します。\n"
+          msg += "   stop....サーバを停止します。\n"
+          msg += "   status..サーバとサービスの状態を表示します。\n"
+          msg += "   df......サーバのディスク容量を表示します。\n"
+          msg += "   cpu.....サーバのCPU利用率を表示します。\n"
+          msg += "   help....このメッセージを表示します。\n"
+          msg += "```\n"
+        end
+      end
+
+      @msg_help["memo"] = "共有メモへの書込み/読出ができます。"
+      @bot.command :memo do |event, action, *option|
+      	case action
+        when "register"
+          @db.update_dictionary(
+            key: option[0],
+            value: option[1],
+            author_username: event.user.name,
+            author_discriminator: event.user.discriminator,
+            locked: option.include?("private")
+            )
+        when "update"
+          @db.update_dictionary(
+            key: option[0],
+            value: option[1],
+            author_username: event.user.name,
+            author_discriminator: event.user.discriminator,
+            locked: option.include?("private"),
+            overwrite: true
+            )
+        when "show"
+          if option.include?("all") then
+            @db.show_dictionary_all(author_discriminator: event.user.discriminator)
+          elsif option.include?("user") then
+            @db.show_dictionary_all(author_discriminator: option[1].to_i)
+          else
+            exist, msg, res = @db.show_dictionary(option[0])
+            if exist then
+              if option.include?("detail") then
+                msg  = "```\n"
+                res.each do |id, value|
+                   msg += "#{id}: #{value}\n"
+                end
+                msg += "```\n"
+              end
+            end
+            msg
+          end
+        when "delete"
+          @db.delete_dictionary(
+            key: option[0],
+            author_discriminator: event.user.discriminator
+            )
+        else
+          msg  = ""
+          unless action == "help" || action == nil then
+            msg += "存在しないコマンドです。"
+          end
+          msg += "```\n"
+          msg += @prefix + "memo [action] (keyword) (value) (option) \n"
+          msg += "       " + @msg_help["memo"] + "\n"
+          msg += "\n"
+          msg += " [action]\n"
+          msg += "   register (keyword) (value) (option)...メモを登録します。\n"
+          msg += "      └(option) private:  他人が更新できなくなります。\n"
+          msg += "\n"
+          msg += "   update (keyword) (value) (option).....メモを更新します。\n"
+          msg += "      └(option) private:  他人が更新できなくなります。\n"
+          msg += "\n"
+          msg += "   show (keyword) (option)...............メモを表示します。\n"
+          msg += "      └(option) detail:   詳細な情報を表示します。\n"
+          msg += "                all:      自分が登録した全メモのkeywordを表示します。\n"
+          msg += "                user [ID] 特定ユーザの全メモのkeywordを表示します。\n"
+          msg += "                          [ID]には#の後の数字(概ね3~5桁)を入力します。\n"
+          msg += "\n"
+          msg += "   delete (keyword)......................メモを削除します。\n"
+          msg += "   help..................................このメッセージを表示します。\n"
+          msg += "\n"
+          msg += " 利用例:\n"
+          msg += "   #{@prefix}memo register 路線図 https://example.com/abc.png\n"
+          msg += "   #{@prefix}memo show 路線図\n"
+          msg += "     → 登録したURLを呼び出せます。\n"
+          msg += "   #{@prefix}memo register エンドポータル 10,-4,523\n"
+          msg += "   #{@prefix}memo show エンドポータル\n"
+          msg += "     → 座標を登録し，上の例同様に呼び出せます。\n"
+          msg += " 注意:\n"
+          msg += "   - keywordとvalueには空白文字を含むことができません。\n"
+          msg += "   - update後にprivateを維持したい場合は，privateを明示的に指定する必要があります。\n"
+          msg += "   - keywordの名前空間は全員共通です。\n"
           msg += "```\n"
         end
       end
 
       @bot.command :help do |event|
+        max_cmd_length = 0
+        @msg_help.each do |cmd, txt|
+          if cmd.length > max_cmd_length then
+            max_cmd_length = cmd.length
+          end
+        end
+
         msg  = "```\n"
-        msg += @prefix + "server [command]: サーバの起動・終了をします（command: start or stop）。\n"
-        msg += @prefix + "help : このメッセージを出力します。\n"
+        @msg_help.each do |cmd, txt|
+          msg += @prefix + cmd
+          (max_cmd_length-cmd.length+2).times do
+            msg += "."
+          end
+          msg += txt + "\n"
+        end
+
+        msg += @prefix + "help"
+        (max_cmd_length-4+2).times do
+          msg += "."
+        end
+        msg += "このメッセージを出力します。\n"
         msg += "```\n"
       end
     end

@@ -1,3 +1,6 @@
+*.log
+*.db
+
 ### https://raw.github.com/github/gitignore/d650516d96ab0abecdc446c64faa992a178e3d18/Ruby.gitignore
 
 *.gem

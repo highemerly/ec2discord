@@ -75,6 +75,10 @@ bot.run
 
 ```
 
+その他，追加機能開発の例としては以下があります。
+
+- [ec2craft](https://github.com/highemerly/ec2craft): Minecraftサーバの管理Bot
+
 ## Contributing
 
 https://github.com/highemerly/ec2discord.

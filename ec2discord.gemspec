@@ -41,4 +41,6 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency "discordrb", "~> 3.3.0"
   spec.add_dependency "dotenv", "~> 2.7.5"
+  spec.add_dependency "logger", "~> 1.4.2"
+  spec.add_dependency "sqlite3", "~> 1.4.2"
 end
