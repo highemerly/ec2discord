@@ -44,7 +44,8 @@ module Ec2discord
 
     def run
       setup
-      puts "Info: Botが起動します。"
+      $log.info("Start bot...")
+      puts "Start bot..."
       @bot.run
     end
 
@@ -57,8 +58,10 @@ module Ec2discord
             @last_control_time = Time.now.to_i
             res = Net::HTTP.get_response(@settings["start_uri"])
             if res.code.to_i == 200 then
+              $log.debug("Success start request.")
               event.respond("サーバの起動を要求しました。しばらくお待ちください。")
             else
+              $log.error("Fail to request AWS endpoint. Error code: #{res.code}, Error body: #{res.body}")
               print "Error: (", res.code, ") ",res.body
               event.respond("【Error】致命的なエラーが発生したため，サーバの起動処理に失敗しました。管理者に問合せてください。")
             end
@@ -68,8 +71,9 @@ module Ec2discord
         when "stop" then
           if Time.now.to_i - @last_control_time > @settings["stop_interval"] then
             @last_control_time = Time.now.to_i
-            event.respond("サーバの停止を要求しました。")
             stdout, stderr = Open3.capture3(@sh["stop"])
+            $log.debug("Success stop request.")
+            event.respond("サーバの停止を要求しました。")
             if (stdout+stderr).include?("closed")
               event.respond("サーバの電源がオフになりました。ご利用ありがとうございました。")
             elsif stderr.include?("timed")
