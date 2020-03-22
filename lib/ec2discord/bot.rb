@@ -39,7 +39,7 @@ module Ec2discord
       @sh["stop"]   = ENV["SV_SERVICENAME"].nil? ? sh_stop_sv : sh_stop_app + " && sleep " + ENV["SV_STOP_WAIT"] + " && " + sh_stop_sv
       @sh["status"] = ENV["SV_SERVICENAME"].nil? ? "" : sh_ssh + hostname + " sudo systemctl status " + ENV["SV_SERVICENAME"] + " | grep Active"
       @sh["df"]     = "ssh " + hostname + " LANG=C df -h /"
-      @sh["cpu"]    = "ssh " + hostname + " uptime | awk '{print $10 $11 $12}'"
+      @sh["cpu"]    = "ssh " + hostname + " uptime | awk 'match($0, /average: .*/) {print substr($0,RSTART+9,RLENGTH+9)}'"
     end
 
     def run
