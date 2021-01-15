@@ -71,9 +71,9 @@ module Ec2discord
         when "stop" then
           if Time.now.to_i - @last_control_time > @settings["stop_interval"] then
             @last_control_time = Time.now.to_i
+            event.respond("サーバの停止を要求します。")
             stdout, stderr = Open3.capture3(@sh["stop"])
             $log.debug("Success stop request.")
-            event.respond("サーバの停止を要求しました。")
             if (stdout+stderr).include?("closed")
               event.respond("サーバの電源がオフになりました。ご利用ありがとうございました。")
             elsif stderr.include?("timed")
