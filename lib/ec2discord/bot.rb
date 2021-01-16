@@ -8,7 +8,8 @@ require 'sqlite3'
 module Ec2discord
   class Bot
     def initialize
-      set_env
+      read_env
+      set_parameter
       @bot = Discordrb::Commands::CommandBot.new(
         client_id: ENV["DC_CLIENT_ID"],
         token:     ENV["DC_BOT_TOKEN"],
@@ -18,7 +19,25 @@ module Ec2discord
       @msg_help = Hash.new
     end
 
-    def set_env
+    def read_env
+      if ARGV[0] == nil then
+        Dotenv.load ".env"
+        $log.info("Reading .env ...")
+        puts "Reading .env ..."
+      else
+        if File.exist?(ARGV[0]) then
+          Dotenv.load ARGV[0]
+          $log.info("Reading #{ARGV[0].to_s} ...")
+          puts "Reading #{ARGV[0].to_s} ..."
+        else
+          $log.fatal("Cannot open #{ARGV[0].to_s}. Existed.")
+          puts "Cannot open #{ARGV[0].to_s}. Existed."
+          exit
+        end
+      end
+    end
+
+    def set_parameter
       @prefix = ENV["DC_COMMAND_PREFIX"].nil? ? "!" : ENV["DC_COMMAND_PREFIX"].to_s
       @last_control_time = 0
 
@@ -30,16 +49,16 @@ module Ec2discord
       @settings["sqlite_filepath"] = ENV["SQLITE_PATH"].nil? ? "ec2discord.db" : ENV["SQLITE_PATH"]
 
       @sh = Hash.new
+      @sh_ssh        = "ssh -o 'ConnectTimeout 5' "
+      @hostname      = ENV["SV_SSH_HOSTNAME"].nil? ? "localhost" : ENV["SV_SSH_HOSTNAME"]
 
-      hostname      = ENV["SV_SSH_HOSTNAME"].nil? ? "localhost" : ENV["SV_SSH_HOSTNAME"]
-      sh_ssh        = "ssh -o 'ConnectTimeout 5' "
-      sh_stop_app   = ENV["SV_SERVICENAME"].nil? ? "" : sh_ssh + hostname + " sudo systemctl stop " + ENV["SV_SERVICENAME"]
-      sh_stop_sv    = sh_ssh + hostname + " sudo shutdown -h now"
+      sh_stop_app   = ENV["SV_SERVICENAME"].nil? ? "" : @sh_ssh + @hostname + " sudo systemctl stop " + ENV["SV_SERVICENAME"]
+      sh_stop_sv    = @sh_ssh +@hostname + " sudo shutdown -h now"
 
       @sh["stop"]   = ENV["SV_SERVICENAME"].nil? ? sh_stop_sv : sh_stop_app + " && sleep " + ENV["SV_STOP_WAIT"] + " && " + sh_stop_sv
-      @sh["status"] = ENV["SV_SERVICENAME"].nil? ? "" : sh_ssh + hostname + " sudo systemctl status " + ENV["SV_SERVICENAME"] + " | grep Active"
-      @sh["df"]     = "ssh " + hostname + " LANG=C df -h /"
-      @sh["cpu"]    = "ssh " + hostname + " uptime | awk 'match($0, /average: .*/) {print substr($0,RSTART+9,RLENGTH+9)}'"
+      @sh["status"] = ENV["SV_SERVICENAME"].nil? ? "" : @sh_ssh + @hostname + " sudo systemctl status " + ENV["SV_SERVICENAME"] + " | grep Active"
+      @sh["df"]     = @sh_ssh + @hostname + " LANG=C df -h /"
+      @sh["cpu"]    = @sh_ssh + @hostname + " uptime | awk 'match($0, /average: .*/) {print substr($0,RSTART+9,RLENGTH+9)}'"
     end
 
     def run
@@ -50,7 +69,7 @@ module Ec2discord
     end
 
     def setup
-      @msg_help["server"] = "サーバの制御要求，または状態確認を行います。"
+      @msg_help["server"] = "サーバ(OS)の制御要求，または状態確認を行います。"
       @bot.command :server do |event, cmd|
         case cmd
         when "start" then
