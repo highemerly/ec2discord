@@ -5,6 +5,8 @@ require 'open3'
 require 'logger'
 require 'sqlite3'
 
+SSH_CONNECT_TIMEOUT = 5
+
 module Ec2discord
   class Bot
     def initialize
@@ -49,7 +51,7 @@ module Ec2discord
       @settings["sqlite_filepath"] = ENV["SQLITE_PATH"].nil? ? "ec2discord.db" : ENV["SQLITE_PATH"]
 
       @sh = Hash.new
-      @sh_ssh        = "ssh -o 'ConnectTimeout 5' "
+      @sh_ssh        = "ssh -o 'ConnectTimeout #{SSH_CONNECT_TIMEOUT.to_s}' "
       @hostname      = ENV["SV_SSH_HOSTNAME"].nil? ? "localhost" : ENV["SV_SSH_HOSTNAME"]
 
       sh_stop_app   = ENV["SV_SERVICENAME"].nil? ? "" : @sh_ssh + @hostname + " sudo systemctl stop " + ENV["SV_SERVICENAME"]
