@@ -5,7 +5,8 @@ require 'open3'
 require 'logger'
 require 'sqlite3'
 
-SSH_CONNECT_TIMEOUT = 5
+SSH_CONNECT_TIMEOUT = 5 #sec
+SSH_STRICT_KEY_CHECK = "no"
 
 module Ec2discord
   class Bot
@@ -45,32 +46,56 @@ module Ec2discord
 
       @settings = Hash.new
 
-      @settings["start_uri"]       = URI.parse(ENV["AWS_EC2START_URI"])
-      @settings["start_interval"]  = ENV["SV_START_MIN_INTERVAL"].to_i > 0 ? ENV["SV_START_MIN_INTERVAL"].to_i : 0
-      @settings["stop_interval"]   = ENV["SV_STOP_MIN_INTERVAL"].to_i > 0 ? ENV["SV_STOP_MIN_INTERVAL"].to_i : 0
-      @settings["sqlite_filepath"] = ENV["SQLITE_PATH"].nil? ? "ec2discord.db" : ENV["SQLITE_PATH"]
+      @settings["start_uri"]         = URI.parse(ENV["AWS_EC2START_URI"])
+      @settings["start_interval"]    = ENV["SV_START_MIN_INTERVAL"].to_i > 0 ? ENV["SV_START_MIN_INTERVAL"].to_i : 0
+      @settings["stop_interval"]     = ENV["SV_STOP_MIN_INTERVAL"].to_i > 0 ? ENV["SV_STOP_MIN_INTERVAL"].to_i : 0
+      @settings["service_stop_wait"] = ENV["SV_STOP_WAIT"].to_i > 0 ? ENV["SV_STOP_WAIT"].to_i : 0
+      @settings["sqlite_filepath"]   = ENV["SQLITE_PATH"].nil? ? "ec2discord.db" : ENV["SQLITE_PATH"]
+      @settings["default_hostname"]  = ENV["SV_SSH_HOSTNAME"].nil? ? "0.0.0.0" : ENV["SV_SSH_HOSTNAME"]
 
-      @sh = Hash.new
-      @sh_ssh        = "ssh -o 'ConnectTimeout #{SSH_CONNECT_TIMEOUT.to_s}' "
-      @hostname      = ENV["SV_SSH_HOSTNAME"].nil? ? "localhost" : ENV["SV_SSH_HOSTNAME"]
-
-      sh_stop_app   = ENV["SV_SERVICENAME"].nil? ? "" : @sh_ssh + @hostname + " sudo systemctl stop " + ENV["SV_SERVICENAME"]
-      sh_stop_sv    = @sh_ssh +@hostname + " sudo shutdown -h now"
-
-      @sh["stop"]   = ENV["SV_SERVICENAME"].nil? ? sh_stop_sv : sh_stop_app + " && sleep " + ENV["SV_STOP_WAIT"] + " && " + sh_stop_sv
-      @sh["status"] = ENV["SV_SERVICENAME"].nil? ? "" : @sh_ssh + @hostname + " sudo systemctl status " + ENV["SV_SERVICENAME"] + " | grep Active"
-      @sh["df"]     = @sh_ssh + @hostname + " LANG=C df -h /"
-      @sh["cpu"]    = @sh_ssh + @hostname + " uptime | awk 'match($0, /average: .*/) {print substr($0,RSTART+9,RLENGTH+9)}'"
+      sh_port       = ENV["SV_SSH_PORT"].nil? ? "" : " -p #{ENV["SV_SSH_PORT"]}"
+      sh_user       = ENV["SV_SSH_USERNAME"].nil? ? "" : " -l #{ENV["SV_SSH_USERNAME"]}"
+      sh_key        = ENV["SV_SSH_PRIVATE_KEY"].nil? ? "" : " -i #{ENV["SV_SSH_PRIVATE_KEY"]}"
+      @sh_ssh       = "ssh -o StrictHostKeyChecking=#{SSH_STRICT_KEY_CHECK} -o 'ConnectTimeout #{SSH_CONNECT_TIMEOUT.to_s}'#{sh_port}#{sh_user}#{sh_key} "
     end
 
-    def run
-      setup
-      $log.info("Start bot...")
-      puts "Start bot..."
-      @bot.run
+    def hostname
+      if (@socket.ipv4_addr != nil) then
+        $log.debug("Hostname check... from socket server: #{@socket}")
+        @socket.ipv4_addr
+      else
+        $log.debug("Hostname check... from env file")
+        @settings["default_hostname"]
+      end
     end
 
-    def setup
+    def sh_stop
+      sh_stop_app   = @sh_ssh + hostname + " sudo systemctl stop " + ENV["SV_SERVICENAME"]
+      sh_stop_sv    = @sh_ssh + hostname + " sudo shutdown -h now"
+      sh = ENV["SV_SERVICENAME"].nil? ? sh_stop_sv : sh_stop_app + " && sleep " + @settings["service_stop_wait"] + " && " + sh_stop_sv
+      $log.debug(sh)
+      sh
+    end
+
+    def sh_status
+      sh = ENV["SV_SERVICENAME"].nil? ? @sh_ssh + hostname + " pwd" : @sh_ssh + hostname + " sudo systemctl status " + ENV["SV_SERVICENAME"] + " | grep Active"
+      $log.debug(sh)
+      sh
+    end
+
+    def sh_df
+      sh = @sh_ssh + hostname + " LANG=C df -h /"
+      $log.debug(sh)
+      sh
+    end
+
+    def sh_cpu
+      sh = @sh_ssh + hostname + " uptime | awk 'match($0, /average: .*/) {print substr($0,RSTART+9,RLENGTH+9)}'"
+      $log.debug(sh)
+      sh
+    end
+
+    def setup_command_bot
       @msg_help["server"] = "サーバ(OS)の制御要求，または状態確認を行います。"
       @bot.command :server do |event, cmd|
         case cmd
@@ -93,7 +118,7 @@ module Ec2discord
           if Time.now.to_i - @last_control_time > @settings["stop_interval"] then
             @last_control_time = Time.now.to_i
             event.respond("サーバの停止を要求します。")
-            stdout, stderr = Open3.capture3(@sh["stop"])
+            stdout, stderr = Open3.capture3(sh_stop)
             $log.debug("Success stop request.")
             if (stdout+stderr).include?("closed")
               event.respond("サーバの電源がオフになりました。ご利用ありがとうございました。")
@@ -107,23 +132,27 @@ module Ec2discord
             event.respond("前回の起動要求との間隔が短すぎます。エラーを防ぐため，" + @settings["stop_interval"].to_s + "秒以上待ってから再度コマンドを発行してください。")
           end
         when "status" then
-          stdout, stderr = Open3.capture3(@sh["status"])
+          stdout, stderr = Open3.capture3(sh_status)
           unless stderr.include?("timed")
             msg  = "サーバは起動しています。\n"
             msg += "アプリの状態は以下のとおりです。\n"
             msg += "```\n"
             msg += stdout
             msg += "```\n"
+            unless @socket.ipv4_addr == nil then
+              msg += "サーバのIPv4アドレスは #{@socket.ipv4_addr} です。\n"
+            end
+            msg
           else
             "サーバは起動していません。"
           end
         when "df" then
           msg  = "```\n"
-          msg += `#{@sh["df"]}`
+          msg += `#{sh_df}`
           msg += "```\n"
         when "cpu" then
           msg  = "1分平均,5分平均,15分平均＝"
-          msg += `#{@sh["cpu"]}`
+          msg += `#{sh_cpu}`
         else
           msg  = ""
           unless cmd == "help" || cmd == nil then
@@ -251,6 +280,25 @@ module Ec2discord
         msg += "このメッセージを出力します。\n"
         msg += "```\n"
       end
+    end
+
+    def setup_socket_server
+      @socket = SocketServer.new()
+    end
+
+    def setup
+      setup_command_bot
+      setup_socket_server
+    end
+
+    def run
+      setup
+      $log.info("Start bot...")
+      puts "Start bot..."
+      server = Thread.new { @socket.run }
+      bot = Thread.new { @bot.run }
+      server.join
+      bot.join
     end
   end
 end
