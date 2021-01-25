@@ -48,7 +48,7 @@ bot.run
 
 非ElasticIP環境の場合，TCPソケット通信を使ってパブリックIPv4を通知する仕組みを利用できます。このRubyスクリプトはサーバ側として動作します。
 
-- `.env` ファイル
+- サーバ： `.env` ファイル
 
 以下のとおり設定を有効化したうえで待ち受けポートを設定します。
 
@@ -57,12 +57,16 @@ SOCKET_SERVER=true
 SOCKET_SERVER_PORT="9002"
 ```
 
-- `dist/client`
+- クライアント： バイナリ
+
+バイナリファイルは以下に配置されています。
+
+https://github.com/highemerly/ec2discord-tcpclient/tree/main/dist
 
 バイナリをEC2サーバに配置し，起動後自動で起動するように設定します。
 
 ```
-./client -host <サーバアドレス> -port 9002
+./ec2discord-tcpclient -host <サーバアドレス> -port 9002
 ```
 
 ### 追加機能の開発
