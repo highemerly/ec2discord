@@ -27,8 +27,8 @@ gem 'ec2discord', git: 'git://github.com/highemerly/ec2discord.git'
 
 Ec2discordでは `DotEnv` が使われています。サンプルを入手し，コメントを参考に適切に設定してください。
 
-    $ wget https://raw.githubusercontent.com/highemerly/ec2discord/master/.env.sample
-    $ cp .env.sample .env
+    $ wget https://raw.githubusercontent.com/highemerly/ec2discord/master/.env.template
+    $ cp .env.template .env
     $ vi .env
 
 ### 実装
@@ -44,6 +44,27 @@ bot.run
 
 ```
 
+### （オプション）非ElasticIP環境の場合
+
+非ElasticIP環境の場合，TCPソケット通信を使ってパブリックIPv4を通知する仕組みを利用できます。このRubyスクリプトはサーバ側として動作します。
+
+- `.env` ファイル
+
+以下のとおり設定を有効化したうえで待ち受けポートを設定します。
+
+```
+SOCKET_SERVER=true
+SOCKET_SERVER_PORT="9002"
+```
+
+- `dist/client`
+
+バイナリをEC2サーバに配置し，起動後自動で起動するように設定します。
+
+```
+./client -host <サーバアドレス> -port 9002
+```
+
 ### 追加機能の開発
 
 botへ機能追加を行う場合，以下のようにbotクラスを継承します。Ec2discordでは，rubygemの `discordrb` が使われており，setupメソッドに追加コマンドを実装することで任意のコマンドが実装可能です。
@@ -51,8 +72,6 @@ botへ機能追加を行う場合，以下のようにbotクラスを継承し�
 ```ruby
 
 require 'ec2discord'
-
-Dotenv.load ".env"
 
 class MyBot < Ec2discord::Bot
 	def setup
