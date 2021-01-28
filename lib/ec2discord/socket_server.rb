@@ -8,6 +8,7 @@ module Ec2discord
   class SocketServer
     def initialize
       @server = TCPServer.open(ENV["SOCKET_SERVER_PORT"])
+      @dns = CloudFlare.new() if ENV["CLOUDFLARE"] = "true"
     end
 
     def run
@@ -20,6 +21,7 @@ module Ec2discord
           @ipv4_addr = res.delete("public_ipv4:").strip
         end
         p "[Socket Server]: Received EC2 public ipv4 address, #{@ipv4_addr}"
+        @dns.update(@ipv4_addr)
 
         client.close
       end

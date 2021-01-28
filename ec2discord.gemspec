@@ -41,6 +41,7 @@ Gem::Specification.new do |spec|
 
   spec.required_ruby_version = ">= 2.6"
 
+  spec.add_dependency "httpclient", "~> 2.8.3"
   spec.add_dependency "discordrb", "~> 3.3.0"
   spec.add_dependency "dotenv", "~> 2.7.6"
   spec.add_dependency "logger", "~> 1.4.3"
