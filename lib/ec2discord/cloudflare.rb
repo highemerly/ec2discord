@@ -16,7 +16,6 @@ module Ec2discord
 
       @zone_list_url = "https://api.cloudflare.com/client/v4/zones/#{ENV["CLOUDFLARE_ZONE_ID"]}/dns_records/"
       @domains = ENV["CLOUDFLARE_DOMAIN"].split(/,/)
-      p @domains
       @header = [["Authorization", "Bearer #{ENV["CLOUDFLARE_API_TOKEN"]}"], ['Content-Type', 'application/json']]
       @domain_ids = Hash.new()
 
