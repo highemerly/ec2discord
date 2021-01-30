@@ -18,7 +18,7 @@ module Ec2discord
         client.puts "RECEIVE"
 
         if res.start_with?("public_ipv4:") then
-          @ipv4_addr = res.delete("public_ipv4:").strip
+          @ipv4_addr = res.gsub(/public_ipv4:/,'').strip
         end
         p "[Socket Server]: Received EC2 public ipv4 address, #{@ipv4_addr}"
         @dns.update(@ipv4_addr)
