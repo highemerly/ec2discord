@@ -72,7 +72,7 @@ module Ec2discord
     def sh_stop
       sh_stop_app   = @sh_ssh + hostname + " sudo systemctl stop " + ENV["SV_SERVICENAME"]
       sh_stop_sv    = @sh_ssh + hostname + " sudo shutdown -h now"
-      sh = ENV["SV_SERVICENAME"].nil? ? sh_stop_sv : sh_stop_app + " && sleep " + @settings["service_stop_wait"] + " && " + sh_stop_sv
+      sh = ENV["SV_SERVICENAME"].nil? ? sh_stop_sv : sh_stop_app + " && sleep " + @settings["service_stop_wait"].to_s + " && " + sh_stop_sv
       $log.debug(sh)
       sh
     end
