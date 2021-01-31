@@ -1,4 +1,3 @@
-require 'dotenv'
 require 'net/http'
 require 'logger'
 require 'socket'
@@ -6,9 +5,11 @@ require 'socket'
 
 module Ec2discord
   class SocketServer
-    def initialize
-      @server = TCPServer.open(ENV["SOCKET_SERVER_PORT"])
-      @dns = CloudFlare.new() if ENV["CLOUDFLARE"] = "true"
+    def initialize(s)
+      @settings = s
+      @server = TCPServer.open(@settings["socket_server_port"])
+      @ipv4_addr = "0.0.0.0"
+      @dns = CloudFlare.new(@settings) if @settings["enable_cloudflare"]
     end
 
     def run
@@ -16,15 +17,22 @@ module Ec2discord
         begin
           client = @server.accept
           res = client.recv(2048)
-          client.puts "RECEIVE"
 
           if res.start_with?("public_ipv4:") then
-            @ipv4_addr = res.gsub(/public_ipv4:/,'').strip
-          end
-          p "[Socket Server]: Received EC2 public ipv4 address, #{@ipv4_addr}"
-          $log.info("[Socket Server]: Recieved EC2 public ipv4 address, #{ipv4_addr}")
+            client.puts "RECEIVE public_ipv4"
+            new_ipv4_addr = res.gsub(/public_ipv4:/,'').strip
+            $log.info("[Socket Server]: Received EC2 public ipv4 address, #{new_ipv4_addr}")
+            p "[Socket Server]: Received EC2 public ipv4 address, #{new_ipv4_addr}"
 
-          @dns.update(@ipv4_addr)
+            unless new_ipv4_addr == @ipv4_addr then
+              @ipv4_addr = new_ipv4_addr
+              $log.debug("[Socket Server]: Update EC2 public ipv4 address")
+              @dns.update(@ipv4_addr) if @settings["enable_cloudflare"]
+            end
+          else
+            client.puts "RECEIVE UNRECOGNIZED DATA"
+            $log.debug("[Socket Server]: Received unrecoginized data: #{res}")
+          end
 
           client.close
         rescue => e

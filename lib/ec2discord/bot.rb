@@ -5,21 +5,28 @@ require 'open3'
 require 'logger'
 require 'sqlite3'
 
-SSH_CONNECT_TIMEOUT = 5 #sec
+TRUE = "true"
+
+SSH_CONNECT_TIMEOUT  = 5 #sec
 SSH_STRICT_KEY_CHECK = "no"
+
+DEFAULT_PREFIX             = "!"
+DEFAULT_SQLITE_FILEPATH    = "ec2discord.db"
+DEFAULT_SOCKET_SERVER_PORT = "9002"
 
 module Ec2discord
   class Bot
     def initialize
       read_env
       set_parameter
+      @last_control_time = 0
+      @msg_help = Hash.new
       @bot = Discordrb::Commands::CommandBot.new(
         client_id: ENV["DC_CLIENT_ID"],
         token:     ENV["DC_BOT_TOKEN"],
         prefix:    @prefix,
       )
       @db = Ec2discordDB.new(@settings["sqlite_filepath"])
-      @msg_help = Hash.new
     end
 
     def read_env
@@ -38,11 +45,19 @@ module Ec2discord
           exit
         end
       end
+
+      begin
+        Dotenv.require_keys("DC_CLIENT_ID", "DC_BOT_TOKEN", "AWS_EC2START_URI", )
+      rescue
+        $log.fatal("Success to open environment file, but required keys are NOT configured. Existed.")
+        puts "Success to open environment file, but required keys are NOT configured. Existed."
+        exit
+      end
     end
 
     def set_parameter
-      @prefix = ENV["DC_COMMAND_PREFIX"].nil? ? "!" : ENV["DC_COMMAND_PREFIX"].to_s
-      @last_control_time = 0
+      @prefix = ENV["DC_COMMAND_PREFIX"].nil? ? DEFAULT_PREFIX : ENV["DC_COMMAND_PREFIX"].to_s
+      $log.debug("Command prefix is set to #{@prefix}")
 
       @settings = Hash.new
 
@@ -50,8 +65,35 @@ module Ec2discord
       @settings["start_interval"]    = ENV["SV_START_MIN_INTERVAL"].to_i > 0 ? ENV["SV_START_MIN_INTERVAL"].to_i : 0
       @settings["stop_interval"]     = ENV["SV_STOP_MIN_INTERVAL"].to_i > 0 ? ENV["SV_STOP_MIN_INTERVAL"].to_i : 0
       @settings["service_stop_wait"] = ENV["SV_STOP_WAIT"].to_i > 0 ? ENV["SV_STOP_WAIT"].to_i : 0
-      @settings["sqlite_filepath"]   = ENV["SQLITE_PATH"].nil? ? "ec2discord.db" : ENV["SQLITE_PATH"]
       @settings["default_hostname"]  = ENV["SV_SSH_HOSTNAME"].nil? ? "0.0.0.0" : ENV["SV_SSH_HOSTNAME"]
+      @settings["main_servicename"]  = ENV["SV_SERVICENAME"].nil? ? nil : ENV["SV_SERVICENAME"].to_s
+
+      @settings["enable_socket_server"] = (ENV["SOCKET_SERVER"].to_s == TRUE)
+      if @settings["enable_socket_server"] then
+        $log.debug("[Socket Server] Enabled.")
+        @settings["socket_server_port"] = ENV["SOCKET_SERVER_PORT"].nil? ? DEFAULT_SOCKET_SERVER_PORT : ENV["SOCKET_SERVER_PORT"].to_s
+      end
+
+      @settings["enable_cloudflare"] = (ENV["CLOUDFLARE"].to_s == TRUE)
+      if @settings["enable_cloudflare"] then
+        begin
+          $log.debug("[CloudFlare] Enabled.")
+          Dotenv.require_keys("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ZONE_ID", "CLOUDFLARE_DOMAIN")
+        rescue
+          $log.fatal("DNS service (CloudFlare) is enabled, but required keys for CloudFlare is NOT configured. Existed.")
+          puts "DNS service (CloudFlare) is enabled, but required keys for CloudFlare is NOT configured. Existed."
+          exit
+        end
+        @settings["cloudflare_api_token"] = ENV["CLOUDFLARE_API_TOKEN"]
+        @settings["cloudflare_zone_id"]   = ENV["CLOUDFLARE_ZONE_ID"]
+        @settings["cloudflare_domains"]   = ENV["CLOUDFLARE_DOMAIN"].split(/,/)
+      end
+
+      @settings["enable_sqlite"] = (ENV["SQLITE"].to_s == TRUE)
+      if @settings["enable_sqlite"] then
+        $log.debug("[SQLITE] Enabled.")
+        @settings["sqlite_filepath"] = ENV["SQLITE_PATH"].nil? ? DEFAULT_SQLITE_FILEPATH : ENV["SQLITE_PATH"]
+      end
 
       sh_port       = ENV["SV_SSH_PORT"].nil? ? "" : " -p #{ENV["SV_SSH_PORT"]}"
       sh_user       = ENV["SV_SSH_USERNAME"].nil? ? "" : " -l #{ENV["SV_SSH_USERNAME"]}"
@@ -61,37 +103,37 @@ module Ec2discord
 
     def hostname
       if (@socket.ipv4_addr != nil) then
-        $log.debug("Hostname check... from socket server: #{@socket}")
+        $log.debug("Hostname check... Get from socket server: #{@socket}")
         @socket.ipv4_addr
       else
-        $log.debug("Hostname check... from env file")
+        $log.debug("Hostname check... Get from env file: #{ @settings["default_hostname"]}")
         @settings["default_hostname"]
       end
     end
 
     def sh_stop
-      sh_stop_app   = @sh_ssh + hostname + " sudo systemctl stop " + ENV["SV_SERVICENAME"]
+      sh_stop_app   = @sh_ssh + hostname + " sudo systemctl stop " + @settings["main_servicename"]
       sh_stop_sv    = @sh_ssh + hostname + " sudo shutdown -h now"
-      sh = ENV["SV_SERVICENAME"].nil? ? sh_stop_sv : sh_stop_app + " && sleep " + @settings["service_stop_wait"].to_s + " && " + sh_stop_sv
-      $log.debug(sh)
+      sh = @settings["main_servicename"].nil? ? sh_stop_sv : sh_stop_app + " && sleep " + @settings["service_stop_wait"].to_s + " && " + sh_stop_sv
+      $log.debug("Issue shell command: #{sh}")
       sh
     end
 
     def sh_status
-      sh = ENV["SV_SERVICENAME"].nil? ? @sh_ssh + hostname + " pwd" : @sh_ssh + hostname + " sudo systemctl status " + ENV["SV_SERVICENAME"] + " | grep Active"
-      $log.debug(sh)
+      sh = @settings["main_servicename"].nil? ? @sh_ssh + hostname + " pwd" : @sh_ssh + hostname + " sudo systemctl status " + @settings["main_servicename"] + " | grep Active"
+      $log.debug("Issue shell command: #{sh}")
       sh
     end
 
     def sh_df
       sh = @sh_ssh + hostname + " LANG=C df -h /"
-      $log.debug(sh)
+      $log.debug("Issue shell command: #{sh}")
       sh
     end
 
     def sh_cpu
       sh = @sh_ssh + hostname + " uptime | awk 'match($0, /average: .*/) {print substr($0,RSTART+9,RLENGTH+9)}'"
-      $log.debug(sh)
+      $log.debug("Issue shell command: #{sh}")
       sh
     end
 
@@ -173,86 +215,89 @@ module Ec2discord
         end
       end
 
-      @msg_help["memo"] = "共有メモへの書込み/読出ができます。"
-      @bot.command :memo do |event, action, *option|
-      	case action
-        when "register"
-          @db.update_dictionary(
-            key: option[0],
-            value: option[1],
-            author_username: event.user.name,
-            author_discriminator: event.user.discriminator,
-            locked: option.include?("private")
-            )
-        when "update"
-          @db.update_dictionary(
-            key: option[0],
-            value: option[1],
-            author_username: event.user.name,
-            author_discriminator: event.user.discriminator,
-            locked: option.include?("private"),
-            overwrite: true
-            )
-        when "show"
-          if option.include?("all") then
-            @db.show_dictionary_all(author_discriminator: event.user.discriminator)
-          elsif option.include?("user") then
-            @db.show_dictionary_all(author_discriminator: option[1].to_i)
-          else
-            exist, msg, res = @db.show_dictionary(option[0])
-            if exist then
-              if option.include?("detail") then
-                msg  = "```\n"
-                res.each do |id, value|
-                   msg += "#{id}: #{value}\n"
+      if @settings["enable_sqlite"] then
+
+        @msg_help["memo"] = "共有メモへの書込み/読出ができます。"
+        @bot.command :memo do |event, action, *option|
+        	case action
+          when "register"
+            @db.update_dictionary(
+              key: option[0],
+              value: option[1],
+              author_username: event.user.name,
+              author_discriminator: event.user.discriminator,
+              locked: option.include?("private")
+              )
+          when "update"
+            @db.update_dictionary(
+              key: option[0],
+              value: option[1],
+              author_username: event.user.name,
+              author_discriminator: event.user.discriminator,
+              locked: option.include?("private"),
+              overwrite: true
+              )
+          when "show"
+            if option.include?("all") then
+              @db.show_dictionary_all(author_discriminator: event.user.discriminator)
+            elsif option.include?("user") then
+              @db.show_dictionary_all(author_discriminator: option[1].to_i)
+            else
+              exist, msg, res = @db.show_dictionary(option[0])
+              if exist then
+                if option.include?("detail") then
+                  msg  = "```\n"
+                  res.each do |id, value|
+                     msg += "#{id}: #{value}\n"
+                  end
+                  msg += "```\n"
                 end
-                msg += "```\n"
               end
+              msg
             end
-            msg
+          when "delete"
+            @db.delete_dictionary(
+              key: option[0],
+              author_discriminator: event.user.discriminator
+              )
+          else
+            msg  = ""
+            unless action == "help" || action == nil then
+              msg += "存在しないコマンドです。"
+            end
+            msg += "```\n"
+            msg += @prefix + "memo [action] (keyword) (value) (option) \n"
+            msg += "       " + @msg_help["memo"] + "\n"
+            msg += "\n"
+            msg += " [action]\n"
+            msg += "   register (keyword) (value) (option)...メモを登録します。\n"
+            msg += "      └(option) private:  他人が更新できなくなります。\n"
+            msg += "\n"
+            msg += "   update (keyword) (value) (option).....メモを更新します。\n"
+            msg += "      └(option) private:  他人が更新できなくなります。\n"
+            msg += "\n"
+            msg += "   show (keyword) (option)...............メモを表示します。\n"
+            msg += "      └(option) detail:   詳細な情報を表示します。\n"
+            msg += "                all:      自分が登録した全メモのkeywordを表示します。\n"
+            msg += "                user [ID] 特定ユーザの全メモのkeywordを表示します。\n"
+            msg += "                          [ID]には#の後の数字(概ね3~5桁)を入力します。\n"
+            msg += "\n"
+            msg += "   delete (keyword)......................メモを削除します。\n"
+            msg += "   help..................................このメッセージを表示します。\n"
+            msg += "\n"
+            msg += " 利用例:\n"
+            msg += "   #{@prefix}memo register 路線図 https://example.com/abc.png\n"
+            msg += "   #{@prefix}memo show 路線図\n"
+            msg += "     → 登録したURLを呼び出せます。\n"
+            msg += "   #{@prefix}memo register エンドポータル 10,-4,523\n"
+            msg += "   #{@prefix}memo show エンドポータル\n"
+            msg += "     → 座標を登録し，上の例同様に呼び出せます。\n"
+            msg += " 注意:\n"
+            msg += "   - keywordとvalueには空白文字を含むことができません。\n"
+            msg += "   - update後にprivateを維持したい場合は，privateを明示的に指定する必要があります。\n"
+            msg += "   - keywordの名前空間は全員共通です。\n"
+            msg += "```\n"
           end
-        when "delete"
-          @db.delete_dictionary(
-            key: option[0],
-            author_discriminator: event.user.discriminator
-            )
-        else
-          msg  = ""
-          unless action == "help" || action == nil then
-            msg += "存在しないコマンドです。"
-          end
-          msg += "```\n"
-          msg += @prefix + "memo [action] (keyword) (value) (option) \n"
-          msg += "       " + @msg_help["memo"] + "\n"
-          msg += "\n"
-          msg += " [action]\n"
-          msg += "   register (keyword) (value) (option)...メモを登録します。\n"
-          msg += "      └(option) private:  他人が更新できなくなります。\n"
-          msg += "\n"
-          msg += "   update (keyword) (value) (option).....メモを更新します。\n"
-          msg += "      └(option) private:  他人が更新できなくなります。\n"
-          msg += "\n"
-          msg += "   show (keyword) (option)...............メモを表示します。\n"
-          msg += "      └(option) detail:   詳細な情報を表示します。\n"
-          msg += "                all:      自分が登録した全メモのkeywordを表示します。\n"
-          msg += "                user [ID] 特定ユーザの全メモのkeywordを表示します。\n"
-          msg += "                          [ID]には#の後の数字(概ね3~5桁)を入力します。\n"
-          msg += "\n"
-          msg += "   delete (keyword)......................メモを削除します。\n"
-          msg += "   help..................................このメッセージを表示します。\n"
-          msg += "\n"
-          msg += " 利用例:\n"
-          msg += "   #{@prefix}memo register 路線図 https://example.com/abc.png\n"
-          msg += "   #{@prefix}memo show 路線図\n"
-          msg += "     → 登録したURLを呼び出せます。\n"
-          msg += "   #{@prefix}memo register エンドポータル 10,-4,523\n"
-          msg += "   #{@prefix}memo show エンドポータル\n"
-          msg += "     → 座標を登録し，上の例同様に呼び出せます。\n"
-          msg += " 注意:\n"
-          msg += "   - keywordとvalueには空白文字を含むことができません。\n"
-          msg += "   - update後にprivateを維持したい場合は，privateを明示的に指定する必要があります。\n"
-          msg += "   - keywordの名前空間は全員共通です。\n"
-          msg += "```\n"
         end
       end
 
@@ -283,19 +328,19 @@ module Ec2discord
     end
 
     def setup_socket_server
-      @socket = SocketServer.new()
+      @socket = SocketServer.new(@settings)
     end
 
     def setup
       setup_command_bot
-      setup_socket_server
+      setup_socket_server if @settings["enable_socket_server"]
     end
 
     def run
       setup
       $log.info("Start bot...")
       puts "Start bot..."
-      server = Thread.new { @socket.run }
+      server = Thread.new { @socket.run } if @settings["enable_socket_server"]
       bot = Thread.new { @bot.run }
       server.join
       bot.join

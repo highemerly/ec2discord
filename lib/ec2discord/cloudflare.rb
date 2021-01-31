@@ -1,22 +1,16 @@
-require 'dotenv'
 require 'httpclient'
 
 
 module Ec2discord
   class CloudFlare
-    def initialize
-
-      if ENV["CLOUDFLARE_DOMAIN"].nil? || ENV["CLOUDFLARE_API_TOKEN"].nil? || ENV["CLOUDFLARE_ZONE_ID"].nil? then
-        p "Error: Cloudflare configuration is not enough."
-        $log.error("Cloud not start CloudFlare function.")
-        exit
-      end
-
+    def initialize(s)
+      @settings = s
       @client = HTTPClient.new()
 
-      @zone_list_url = "https://api.cloudflare.com/client/v4/zones/#{ENV["CLOUDFLARE_ZONE_ID"]}/dns_records/"
-      @domains = ENV["CLOUDFLARE_DOMAIN"].split(/,/)
-      @header = [["Authorization", "Bearer #{ENV["CLOUDFLARE_API_TOKEN"]}"], ['Content-Type', 'application/json']]
+      @zone_list_url = "https://api.cloudflare.com/client/v4/zones/#{@settings["cloudflare_zone_id"]}/dns_records/"
+      @domains       = @settings["cloudflare_domains"]
+      @header        = [["Authorization", "Bearer #{@settings["cloudflare_api_token"]}"], ['Content-Type', 'application/json']]
+
       @domain_ids = Hash.new()
 
       @domains.each do | domain |
