@@ -133,9 +133,9 @@ botへ機能追加を行う場合，以下のようにbotクラスを継承し�
 require 'ec2discord'
 
 class MyBot < Ec2discord::Bot
-	def setup
-		super
-		@bot.command :omikuji do |event|
+  def setup
+    super
+    @bot.command :omikuji do |event|
       t = Array[
         "大吉",
         "中吉",
